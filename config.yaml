@@ -1,0 +1,37 @@
+config:
+  port: 8080
+  tls: false
+  auth: true
+
+auth:
+  type: jwt
+  jwt_secret: "secret"
+
+apis:
+  - name: sales_api
+    protocol: http
+    routes:
+      - path: /v1/sales
+        upstreams:
+          - host: localhost
+            port: 8879
+          - host: localhost
+            port: 8880
+    load_balancing: round_robin
+    rate_limit: 5
+    max_retries: 2
+    retry_delay_ms: 100
+    fallback_response:
+      status: 503
+      body: '{"error": "service unavailable"}'
+
+  - name: chat_ws
+    protocol: websocket
+    routes:
+      - path: /ws/chat
+        upstreams:
+          - host: localhost
+            port: 9001
+          - host: localhost
+            port: 9002
+    sticky_sessions: true
