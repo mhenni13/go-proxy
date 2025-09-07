@@ -12,6 +12,9 @@ type Config struct {
 		Port int  `yaml:"port"`
 		TLS  bool `yaml:"tls"`
 		Auth bool `yaml:"auth"`
+		ReadTimeout  string        `yaml:"read_timeout"`  // duration as string
+		WriteTimeout string        `yaml:"write_timeout"`
+		IdleTimeout  string        `yaml:"idle_timeout"`
 	} `yaml:"config"`
 	Auth AuthConfig `yaml:"auth"`
 	APIs []APIConfig `yaml:"apis"`

@@ -6,11 +6,10 @@ import (
 	"log"
 	"net/http"
 	"time"
+
+	"github.com/mhenni13/go-proxy/internal/config"
 	"github.com/mhenni13/go-proxy/internal/logging"
 	"github.com/mhenni13/go-proxy/internal/proxy"
-	"github.com/mhenni13/go-proxy/internal/config"
-
-
 )
 
 func main() {
@@ -27,12 +26,27 @@ func main() {
 
 	handler := logging.LoggingMiddleware(mux)
 
+	readTimeout, err := time.ParseDuration(cfg.Config.ReadTimeout)
+	if err != nil {
+		log.Fatalf("Invalid read_timeout: %v", err)
+	}
+
+	writeTimeout, err := time.ParseDuration(cfg.Config.WriteTimeout)
+	if err != nil {
+		log.Fatalf("Invalid write_timeout: %v", err)
+	}
+
+	idleTimeout, err := time.ParseDuration(cfg.Config.IdleTimeout)
+	if err != nil {
+		log.Fatalf("Invalid idle_timeout: %v", err)
+	}
+
 	server := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Config.Port),
 		Handler:      handler,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		ReadTimeout:  readTimeout * time.Second,
+		WriteTimeout: writeTimeout * time.Second,
+		IdleTimeout:  idleTimeout * time.Second,
 	}
 
 	log.Printf("🚀 Proxy starting on :%d ...", cfg.Config.Port)
