@@ -1,4 +1,4 @@
-package main
+package proxy
 
 import (
 	"fmt"
@@ -8,9 +8,12 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/google/uuid"
+	"github.com/mhenni13/go-proxy/internal/logging"
+	"github.com/mhenni13/go-proxy/internal/config"
+
 )
 
-func handleWebSocket(w http.ResponseWriter, r *http.Request, upstream Upstream) {
+func handleWebSocket(w http.ResponseWriter, r *http.Request, upstream config.Upstream) {
 	requestID := uuid.NewString()
 	r.Header.Set("X-Request-ID", requestID)
 
@@ -18,7 +21,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request, upstream Upstream) 
 	dialer := websocket.Dialer{HandshakeTimeout: 10 * time.Second, EnableCompression: true}
 	upstreamConn, _, err := dialer.Dial(upstreamURL.String(), r.Header)
 	if err != nil {
-		logger.Log(map[string]interface{}{
+		logging.LoggerInstance.Log(map[string]interface{}{
 			"type":       "websocket_error",
 			"request_id": requestID,
 			"event":      "connect_upstream",
@@ -34,7 +37,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request, upstream Upstream) 
 	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 	clientConn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		logger.Log(map[string]interface{}{
+		logging.LoggerInstance.Log(map[string]interface{}{
 			"type":       "websocket_error",
 			"request_id": requestID,
 			"event":      "upgrade_client",
@@ -45,7 +48,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request, upstream Upstream) 
 	}
 	defer clientConn.Close()
 
-	logger.Log(map[string]interface{}{
+	logging.LoggerInstance.Log(map[string]interface{}{
 		"type":       "websocket_event",
 		"request_id": requestID,
 		"event":      "connection_established",
@@ -90,7 +93,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request, upstream Upstream) 
 	}()
 
 	if err := <-errCh; err != nil {
-		logger.Log(map[string]interface{}{
+		logging.LoggerInstance.Log(map[string]interface{}{
 			"type":       "websocket_event",
 			"request_id": requestID,
 			"event":      "connection_closed",

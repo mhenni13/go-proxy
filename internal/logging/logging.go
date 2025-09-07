@@ -1,4 +1,4 @@
-package main
+package logging
 
 import (
 	"bytes"
@@ -15,7 +15,8 @@ type Logger struct {
 	encoder *json.Encoder
 }
 
-var logger = NewLogger()
+// Global logger instance
+var LoggerInstance = NewLogger()
 
 func NewLogger() *Logger {
 	return &Logger{encoder: json.NewEncoder(os.Stdout)}
@@ -23,9 +24,13 @@ func NewLogger() *Logger {
 
 func (l *Logger) Log(fields map[string]interface{}) {
 	fields["timestamp"] = time.Now().Format(time.RFC3339Nano)
-	_ = l.encoder.Encode(fields)
+	if err := l.encoder.Encode(fields); err != nil {
+		// log errors to stderr if JSON encoding fails
+		_, _ = os.Stderr.WriteString("log encode error: " + err.Error() + "\n")
+	}
 }
 
+// Custom response writer to capture status codes
 type loggingResponseWriter struct {
 	http.ResponseWriter
 	statusCode int
@@ -36,7 +41,8 @@ func (lrw *loggingResponseWriter) WriteHeader(code int) {
 	lrw.ResponseWriter.WriteHeader(code)
 }
 
-func loggingMiddleware(next http.Handler) http.Handler {
+// Middleware that logs all requests
+func LoggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestID := uuid.NewString()
 		r.Header.Set("X-Request-ID", requestID)
@@ -54,7 +60,7 @@ func loggingMiddleware(next http.Handler) http.Handler {
 
 		duration := time.Since(start)
 
-		logger.Log(map[string]interface{}{
+		LoggerInstance.Log(map[string]interface{}{
 			"type":        "http_request",
 			"request_id":  requestID,
 			"method":      r.Method,

@@ -1,18 +1,19 @@
-package main
+package proxy
 
 import (
 	"math/rand"
 	"sync"
+	"github.com/mhenni13/go-proxy/internal/config"
 )
 
 type LoadBalancer struct {
 	strategy  string
-	upstreams []Upstream
+	upstreams []config.Upstream
 	index     int
 	mu        sync.Mutex
 }
 
-func NewLoadBalancer(strategy string, upstreams []Upstream) *LoadBalancer {
+func NewLoadBalancer(strategy string, upstreams []config.Upstream) *LoadBalancer {
 	return &LoadBalancer{
 		strategy:  strategy,
 		upstreams: upstreams,
@@ -20,7 +21,7 @@ func NewLoadBalancer(strategy string, upstreams []Upstream) *LoadBalancer {
 	}
 }
 
-func (lb *LoadBalancer) Next() Upstream {
+func (lb *LoadBalancer) Next() config.Upstream {
 	lb.mu.Lock()
 	defer lb.mu.Unlock()
 	if lb.strategy == "random" {

@@ -1,10 +1,10 @@
-package main
+package headers
 
 import (
 	"net/http"
 )
 
-func withHeaders(next http.Handler, headers map[string]string, cookies map[string]string) http.Handler {
+func WithHeaders(next http.Handler, headers map[string]string, cookies map[string]string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Set custom headers
 		for k, v := range headers {

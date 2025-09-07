@@ -1,4 +1,5 @@
-package main
+package config
+
 
 import (
 	"io/ioutil"

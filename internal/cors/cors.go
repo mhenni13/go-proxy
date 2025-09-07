@@ -1,11 +1,12 @@
-package main
+package cors
 
 import (
 	"net/http"
 	"strings"
+	"github.com/mhenni13/go-proxy/internal/config"
 )
 
-func withCORS(next http.Handler, corsCfg CORSConfig) http.Handler {
+func WithCORS(next http.Handler, corsCfg config.CORSConfig) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
 

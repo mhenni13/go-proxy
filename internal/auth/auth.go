@@ -1,4 +1,4 @@
-package main
+package auth
 
 import (
 	"fmt"
@@ -8,7 +8,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-func validateJWT(r *http.Request, secret string) bool {
+func ValidateJWT(r *http.Request, secret string) bool {
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
 		return false

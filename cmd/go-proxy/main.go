@@ -6,21 +6,26 @@ import (
 	"log"
 	"net/http"
 	"time"
+	"github.com/mhenni13/go-proxy/internal/logging"
+	"github.com/mhenni13/go-proxy/internal/proxy"
+	"github.com/mhenni13/go-proxy/internal/config"
+
+
 )
 
 func main() {
-	configPath := flag.String("config", "config.yaml", "Path to config file")
+	configPath := flag.String("config", "internal/config/config.yaml", "Path to config file")
 	flag.Parse()
 
-	cfg, err := LoadConfig(*configPath)
+	cfg, err := config.LoadConfig(*configPath)
 	if err != nil {
 		log.Fatalf("❌ Failed to load config: %v", err)
 	}
 
 	mux := http.NewServeMux()
-	RegisterAPIs(mux, cfg)
+	proxy.RegisterAPIs(mux, cfg)
 
-	handler := loggingMiddleware(mux)
+	handler := logging.LoggingMiddleware(mux)
 
 	server := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Config.Port),

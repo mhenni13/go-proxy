@@ -1,4 +1,4 @@
-package main
+package proxy
 
 import (
 	"fmt"
@@ -6,21 +6,28 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"time"
+
+	"github.com/mhenni13/go-proxy/internal/auth"
+	"github.com/mhenni13/go-proxy/internal/config"
+	"github.com/mhenni13/go-proxy/internal/cors"
+	"github.com/mhenni13/go-proxy/internal/headers"
+	"github.com/mhenni13/go-proxy/internal/logging"
+	"github.com/mhenni13/go-proxy/internal/ratelimit"
 )
 
 // RegisterAPIs registers all API routes from config
-func RegisterAPIs(mux *http.ServeMux, cfg *Config) {
+func RegisterAPIs(mux *http.ServeMux, cfg *config.Config) {
 	for _, api := range cfg.APIs {
 		for _, route := range api.Routes {
 			lb := NewLoadBalancer(api.LoadBalancing, route.Upstreams)
-			limiter := NewRateLimiter(api.RateLimit)
+			limiter := ratelimit.NewRateLimiter(api.RateLimit)
 
 			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requestID := r.Header.Get("X-Request-ID")
 
 				if cfg.Config.Auth && !api.Public {
-					if !validateJWT(r, cfg.Auth.JWTSecret) {
-						logger.Log(map[string]interface{}{
+					if !auth.ValidateJWT(r, cfg.Auth.JWTSecret) {
+						logging.LoggerInstance.Log(map[string]interface{}{
 							"type":       "auth_error",
 							"request_id": requestID,
 							"client":     r.RemoteAddr,
@@ -65,13 +72,13 @@ func RegisterAPIs(mux *http.ServeMux, cfg *Config) {
 				if lastErr != nil {
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(api.FallbackResponse.Status)
-					w.Write([]byte(api.FallbackResponse.Body))
+					_, _ = w.Write([]byte(api.FallbackResponse.Body))
 				}
 			})
 
 			// Wrap with headers and CORS
-			handlerWithHeaders := withHeaders(handler, api.Headers, api.Cookies)
-			handlerWithCORS := withCORS(handlerWithHeaders, api.CORS)
+			handlerWithHeaders := headers.WithHeaders(handler, api.Headers, api.Cookies)
+			handlerWithCORS := cors.WithCORS(handlerWithHeaders, api.CORS)
 
 			// Register route
 			mux.Handle(route.Path, handlerWithCORS)
