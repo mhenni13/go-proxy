@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/mhenni13/go-proxy"
 	"flag"
 	"fmt"
 	"log"
@@ -12,15 +13,15 @@ func main() {
 	configPath := flag.String("config", "config.yaml", "Path to config file")
 	flag.Parse()
 
-	cfg, err := LoadConfig(*configPath)
+	cfg, err := go_proxy.LoadConfig(*configPath)
 	if err != nil {
 		log.Fatalf("❌ Failed to load config: %v", err)
 	}
 
 	mux := http.NewServeMux()
-	RegisterAPIs(mux, cfg)
+	go_proxy.RegisterAPIs(mux, cfg)
 
-	handler := loggingMiddleware(mux)
+	handler := go_proxy.LoggingMiddleware(mux)
 
 	server := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Config.Port),

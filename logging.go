@@ -1,4 +1,4 @@
-package main
+package go_proxy
 
 import (
 	"bytes"
@@ -36,7 +36,7 @@ func (lrw *loggingResponseWriter) WriteHeader(code int) {
 	lrw.ResponseWriter.WriteHeader(code)
 }
 
-func loggingMiddleware(next http.Handler) http.Handler {
+func LoggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestID := uuid.NewString()
 		r.Header.Set("X-Request-ID", requestID)
