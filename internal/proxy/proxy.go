@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -20,8 +21,10 @@ func RegisterAPIs(mux *http.ServeMux, cfg *config.Config) {
 	for _, api := range cfg.APIs {
 		for _, route := range api.Routes {
 			lb := NewLoadBalancer(api.LoadBalancing, route.Upstreams)
-			limiter := ratelimit.NewRateLimiter(api.RateLimit)
-
+			limiter, err := ratelimit.NewRateLimiter(api.RateLimit)
+			if err != nil {
+				log.Fatalf("Invalid rate_limit for API %s: %v", api.Name, err)
+			}
 			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requestID := r.Header.Get("X-Request-ID")
 

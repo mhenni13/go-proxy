@@ -31,7 +31,7 @@ type APIConfig struct {
 	Public          bool              `yaml:"public"`
 	Routes          []Route           `yaml:"routes"`
 	CORS            CORSConfig        `yaml:"cors"`
-	RateLimit       int               `yaml:"rate_limit"`
+	RateLimit       *int         	  `yaml:"rate_limit,omitempty"`
 	LoadBalancing   string            `yaml:"load_balancing"`
 	Sticky          bool              `yaml:"sticky_sessions"`
 	Headers         map[string]string `yaml:"headers"`
