@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"encoding/base64"
 	"fmt"
 	"log"
 	"net/http"
@@ -73,9 +74,25 @@ func RegisterAPIs(mux *http.ServeMux, cfg *config.Config) {
 				}
 
 				if lastErr != nil {
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(api.FallbackResponse.Status)
-					_, _ = w.Write([]byte(api.FallbackResponse.Body))
+					if api.FallbackResponse != nil {
+						w.Header().Set("Content-Type", "application/json")
+						w.WriteHeader(api.FallbackResponse.Status)
+						var body []byte
+						if api.FallbackResponse.BodyBase64 != "" {
+							decoded, err := base64.StdEncoding.DecodeString(api.FallbackResponse.BodyBase64)
+							if err != nil {
+								body = []byte(`{"error":"invalid base64 fallback"}`)
+							} else {
+								body = decoded
+							}
+						} else {
+							body = []byte(api.FallbackResponse.Body)
+						}
+						_, _ = w.Write(body)
+					} else {
+						// no fallback configured, return generic 502
+						http.Error(w, "Bad Gateway", http.StatusBadGateway)
+					}
 				}
 			})
 

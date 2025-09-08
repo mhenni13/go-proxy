@@ -1,7 +1,7 @@
 package config
 
-
 import (
+	"fmt"
 	"io/ioutil"
 
 	"gopkg.in/yaml.v3"
@@ -9,14 +9,14 @@ import (
 
 type Config struct {
 	Config struct {
-		Port int  `yaml:"port"`
-		TLS  bool `yaml:"tls"`
-		Auth bool `yaml:"auth"`
-		ReadTimeout  string        `yaml:"read_timeout"`  // duration as string
-		WriteTimeout string        `yaml:"write_timeout"`
-		IdleTimeout  string        `yaml:"idle_timeout"`
+		Port         int    `yaml:"port"`
+		TLS          bool   `yaml:"tls"`
+		Auth         bool   `yaml:"auth"`
+		ReadTimeout  string `yaml:"read_timeout"` // duration as string
+		WriteTimeout string `yaml:"write_timeout"`
+		IdleTimeout  string `yaml:"idle_timeout"`
 	} `yaml:"config"`
-	Auth AuthConfig `yaml:"auth"`
+	Auth AuthConfig  `yaml:"auth"`
 	APIs []APIConfig `yaml:"apis"`
 }
 
@@ -26,24 +26,25 @@ type AuthConfig struct {
 }
 
 type APIConfig struct {
-	Name            string            `yaml:"name"`
-	Protocol        string            `yaml:"protocol"`
-	Public          bool              `yaml:"public"`
-	Routes          []Route           `yaml:"routes"`
-	CORS            CORSConfig        `yaml:"cors"`
-	RateLimit       *int         	  `yaml:"rate_limit,omitempty"`
-	LoadBalancing   string            `yaml:"load_balancing"`
-	Sticky          bool              `yaml:"sticky_sessions"`
-	Headers         map[string]string `yaml:"headers"`
-	Cookies         map[string]string `yaml:"cookies"`
-	MaxRetries      int               `yaml:"max_retries"`
-	RetryDelayMs    int               `yaml:"retry_delay_ms"`
-	FallbackResponse FallbackResponse `yaml:"fallback_response"`
+	Name             string            `yaml:"name"`
+	Protocol         string            `yaml:"protocol"`
+	Public           bool              `yaml:"public"`
+	Routes           []Route           `yaml:"routes"`
+	CORS             CORSConfig        `yaml:"cors"`
+	RateLimit        *int              `yaml:"rate_limit,omitempty"`
+	LoadBalancing    string            `yaml:"load_balancing"`
+	Sticky           bool              `yaml:"sticky_sessions"`
+	Headers          map[string]string `yaml:"headers"`
+	Cookies          map[string]string `yaml:"cookies"`
+	MaxRetries       int               `yaml:"max_retries"`
+	RetryDelayMs     int               `yaml:"retry_delay_ms"`
+	FallbackResponse *FallbackResponse `yaml:"fallback_response,omitempty"`
 }
 
 type FallbackResponse struct {
-	Status int    `yaml:"status"`
-	Body   string `yaml:"body"`
+	Status     int    `yaml:"status"`
+	Body       string `yaml:"body,omitempty"`
+	BodyBase64 string `yaml:"body_base64,omitempty"`
 }
 
 type Route struct {
@@ -62,6 +63,16 @@ type CORSConfig struct {
 	AllowedHeaders []string `yaml:"allowed_headers"`
 }
 
+func (fr FallbackResponse) Validate() error {
+	if fr.Body != "" && fr.BodyBase64 != "" {
+		return fmt.Errorf("fallback_response cannot have both body and body_base64")
+	}
+	if fr.Body == "" && fr.BodyBase64 == "" {
+		return fmt.Errorf("fallback_response must have either body or body_base64")
+	}
+	return nil
+}
+
 func LoadConfig(path string) (*Config, error) {
 	data, err := ioutil.ReadFile(path)
 	if err != nil {
@@ -70,6 +81,14 @@ func LoadConfig(path string) (*Config, error) {
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, err
+	}
+
+	// Ensure required fields are initialized
+	if cfg.Config.Port == 0 {
+		cfg.Config.Port = 8080 // default port
+	}
+	if cfg.APIs == nil {
+		cfg.APIs = []APIConfig{}
 	}
 	return &cfg, nil
 }
