@@ -26,6 +26,27 @@ apis:
     retry_delay_ms: 100
     fallback_response:
       status: 503
+      body_base64: "eyJlcnJvciI6ICJzZXJ2aWNlIHVuYXZhaWxhYmxlIn0="
+
+  - name: users_api
+    protocol: http
+    routes:
+      - path: /v1/users
+        upstreams:
+          - host: localhost
+            port: 8866
+          - host: localhost
+            port: 8844
+    cors:
+      allowed_origins: ["*"]
+      allowed_methods: ["GET", "POST", "OPTIONS"]
+      allowed_headers: ["Authorization", "Content-Type"]
+    load_balancing: round_robin
+    rate_limit: 5
+    max_retries: 3
+    retry_delay_ms: 100
+    fallback_response:
+      status: 503
       body: '{"error": "service unavailable"}'
 
   - name: chat_ws
