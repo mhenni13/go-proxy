@@ -53,8 +53,10 @@ type Route struct {
 }
 
 type Upstream struct {
-	Host string `yaml:"host"`
-	Port int    `yaml:"port"`
+    Host        string `yaml:"host"`
+    Port        int    `yaml:"port"`
+    TLS         *bool  `yaml:"tls,omitempty"`
+    TLSInsecure *bool  `yaml:"tls_insecure,omitempty"`
 }
 
 type CORSConfig struct {
@@ -89,6 +91,28 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if cfg.APIs == nil {
 		cfg.APIs = []APIConfig{}
+	}
+	for i, api := range cfg.APIs {
+		for j, route := range api.Routes {
+			for k, upstream := range route.Upstreams {
+				// default tls to false if not set
+				if upstream.TLS == nil {
+					def := false
+					cfg.APIs[i].Routes[j].Upstreams[k].TLS = &def
+				}
+	
+				// if tls=true but tls_insecure missing -> default to false
+				if *cfg.APIs[i].Routes[j].Upstreams[k].TLS && upstream.TLSInsecure == nil {
+					def := false
+					cfg.APIs[i].Routes[j].Upstreams[k].TLSInsecure = &def
+				}
+	
+				// if tls_insecure is set but tls=false -> error
+				if (upstream.TLS == nil || !*upstream.TLS) && upstream.TLSInsecure != nil {
+					return nil, fmt.Errorf("invalid config: tls_insecure cannot be set without tls=true (API %s, route %s)", api.Name, route.Path)
+				}
+			}
+		}
 	}
 	return &cfg, nil
 }

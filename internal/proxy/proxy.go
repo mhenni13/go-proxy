@@ -1,7 +1,7 @@
 package proxy
 
 import (
-	"encoding/base64"
+	"crypto/tls"
 	"fmt"
 	"log"
 	"net/http"
@@ -26,6 +26,7 @@ func RegisterAPIs(mux *http.ServeMux, cfg *config.Config) {
 			if err != nil {
 				log.Fatalf("Invalid rate_limit for API %s: %v", api.Name, err)
 			}
+
 			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requestID := r.Header.Get("X-Request-ID")
 
@@ -52,15 +53,25 @@ func RegisterAPIs(mux *http.ServeMux, cfg *config.Config) {
 				for i := 0; i <= api.MaxRetries; i++ {
 					target := lb.Next()
 
-					if api.Protocol == "websocket" {
-						handleWebSocket(w, r, target)
-						return
+					// Determine scheme based on TLS config
+					scheme := "http"
+					if target.TLS != nil && *target.TLS {
+						scheme = "https"
 					}
 
 					proxy := httputil.NewSingleHostReverseProxy(&url.URL{
-						Scheme: "http",
+						Scheme: scheme,
 						Host:   fmt.Sprintf("%s:%d", target.Host, target.Port),
 					})
+
+					// Configure TLS settings if https
+					if scheme == "https" {
+						proxy.Transport = &http.Transport{
+							TLSClientConfig: &tls.Config{
+								InsecureSkipVerify: target.TLSInsecure != nil && *target.TLSInsecure,
+							},
+						}
+					}
 
 					proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 						lastErr = err
@@ -74,25 +85,9 @@ func RegisterAPIs(mux *http.ServeMux, cfg *config.Config) {
 				}
 
 				if lastErr != nil {
-					if api.FallbackResponse != nil {
-						w.Header().Set("Content-Type", "application/json")
-						w.WriteHeader(api.FallbackResponse.Status)
-						var body []byte
-						if api.FallbackResponse.BodyBase64 != "" {
-							decoded, err := base64.StdEncoding.DecodeString(api.FallbackResponse.BodyBase64)
-							if err != nil {
-								body = []byte(`{"error":"invalid base64 fallback"}`)
-							} else {
-								body = decoded
-							}
-						} else {
-							body = []byte(api.FallbackResponse.Body)
-						}
-						_, _ = w.Write(body)
-					} else {
-						// no fallback configured, return generic 502
-						http.Error(w, "Bad Gateway", http.StatusBadGateway)
-					}
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(api.FallbackResponse.Status)
+					_, _ = w.Write([]byte(api.FallbackResponse.Body))
 				}
 			})
 

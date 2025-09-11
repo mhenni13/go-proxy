@@ -20,6 +20,8 @@ apis:
             port: 8879
           - host: localhost
             port: 8880
+            tls: true
+            tls_insecure: true
     load_balancing: round_robin
     rate_limit: 5
     max_retries: 2
