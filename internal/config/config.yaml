@@ -2,36 +2,61 @@ config:
   port: 8080
   tls: false
   auth: true
-  read_timeout: 30s
-  write_timeout: 30s
-  idle_timeout: 120s
+  read_timeout: "15s"
+  write_timeout: "15s"
+  idle_timeout: "60s"
 
 auth:
-  type: jwt
-  jwt_secret: "secret"
+  - group: admins
+    type: jwt
+    jwt_secret: "supersecret"
+    verify: 'have("admin") || have("superadmin")'
+
+  - group: devops
+    type: jwt
+    jwt_secret: "devopssecret"
+    verify: 'is("group","devops")'
+
+  - group: basicusers
+    type: basic
+    users:
+      - username: "alice"
+        password_hash: "$2a$10$PvnUXAOm.dNZ8CLZFG925e8xl1EiQ.3HhD5TlTki8N5/kNCKAVVJC" # bcrypt hashed password
 
 apis:
   - name: sales_api
     protocol: http
+    permissions:
+      - devops
+    public: false
     routes:
       - path: /v1/sales
         upstreams:
           - host: localhost
-            port: 8879
-          - host: localhost
             port: 8880
             tls: true
             tls_insecure: true
-    load_balancing: round_robin
+    cors:
+      allowed_origins: ["*"]
+      allowed_methods: ["GET", "POST", "OPTIONS"]
+      allowed_headers: ["Authorization", "Content-Type"]
     rate_limit: 5
+    load_balancing: round_robin
+    headers:
+      X-Custom-Header: "myproxy"
+    cookies:
+      mycookie: "value"
     max_retries: 2
-    retry_delay_ms: 100
+    retry_delay_ms: 200
     fallback_response:
       status: 503
-      body_base64: "eyJlcnJvciI6ICJzZXJ2aWNlIHVuYXZhaWxhYmxlIn0="
+      body: '{"error": "service unavailable"}'
 
   - name: users_api
     protocol: http
+    permissions:
+      - admins
+      - basicusers
     routes:
       - path: /v1/users
         upstreams:
@@ -50,14 +75,3 @@ apis:
     fallback_response:
       status: 503
       body: '{"error": "service unavailable"}'
-
-  - name: chat_ws
-    protocol: websocket
-    routes:
-      - path: /ws/chat
-        upstreams:
-          - host: localhost
-            port: 9001
-          - host: localhost
-            port: 9002
-    sticky_sessions: true

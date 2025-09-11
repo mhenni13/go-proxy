@@ -30,14 +30,64 @@ func RegisterAPIs(mux *http.ServeMux, cfg *config.Config) {
 			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requestID := r.Header.Get("X-Request-ID")
 
-				if cfg.Config.Auth && !api.Public {
-					if !auth.ValidateJWT(r, cfg.Auth.JWTSecret) {
+				if !api.Public && len(cfg.Auth) > 0 {
+					var authorized bool
+					var authErr error
+
+					for _, groupName := range api.Permissions {
+						authConfig, ok := cfg.GetAuthByGroup(groupName) // helper to find AuthConfig by group
+						if !ok {
+							continue
+						}
+						switch authConfig.Type {
+						case "jwt":
+							claims, ok := auth.ExtractJWTClaims(r, authConfig.JwtSecret)
+							if !ok {
+								continue // try next auth config
+							}
+
+							// If verify expression exists, evaluate it
+							if authConfig.VerifyExpr != "" {
+								ok, err := auth.EvalPredicate(authConfig.VerifyExpr, claims)
+								if err != nil {
+									authErr = err
+									continue
+								}
+								if ok {
+									authorized = true
+									break
+								}
+							} else {
+								// No verify expression → accept if JWT is valid
+								authorized = true
+								break
+							}
+
+						case "basic":
+							username, password, ok := r.BasicAuth()
+							if !ok {
+								continue
+							}
+
+							for _, u := range authConfig.Users {
+								if u.Username == username && auth.ComparePassword(u.PasswordHash, password) {
+									authorized = true
+									break
+								}
+							}
+							if authorized {
+								break
+							}
+						}
+					}
+
+					if !authorized {
 						logging.LoggerInstance.Log(map[string]interface{}{
 							"type":       "auth_error",
 							"request_id": requestID,
 							"client":     r.RemoteAddr,
 							"path":       r.URL.Path,
-							"error":      "unauthorized",
+							"error":      auth.AuthErrOrUnauthorized(authErr),
 						})
 						http.Error(w, "Unauthorized", http.StatusUnauthorized)
 						return
