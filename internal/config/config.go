@@ -11,6 +11,8 @@ type Config struct {
 	Config struct {
 		Port         int    `yaml:"port"`
 		TLS          bool   `yaml:"tls"`
+		TLSCertFile  string `yaml:"tls_cert_file,omitempty"`  // Path to TLS certificate file
+		TLSKeyFile   string `yaml:"tls_key_file,omitempty"`   // Path to TLS private key file
 		Auth         bool   `yaml:"auth"`
 		ReadTimeout  string `yaml:"read_timeout"` // duration as string
 		WriteTimeout string `yaml:"write_timeout"`
@@ -48,6 +50,7 @@ type APIConfig struct {
 	RetryDelayMs     int               `yaml:"retry_delay_ms"`
 	FallbackResponse FallbackResponse  `yaml:"fallback_response"`
 	Permissions      []string          `yaml:"permissions,omitempty"` // groups allowed
+	Security         SecurityConfig    `yaml:"security,omitempty"`    // IP blocker and WAF settings
 }
 
 type FallbackResponse struct {
@@ -57,8 +60,16 @@ type FallbackResponse struct {
 }
 
 type Route struct {
-	Path      string     `yaml:"path"`
-	Upstreams []Upstream `yaml:"upstreams"`
+	Path               string           `yaml:"path"`
+	Upstreams          []Upstream       `yaml:"upstreams"`
+	DeploymentStrategy DeploymentConfig `yaml:"deployment_strategy,omitempty"`
+}
+
+type DeploymentConfig struct {
+	Type           string `yaml:"type,omitempty"`            // blue-green, canary, rolling, recreate
+	ActiveVersion  string `yaml:"active_version,omitempty"`  // For blue-green: which version is active
+	CanaryPercent  int    `yaml:"canary_percent,omitempty"`  // For canary: percentage to new version
+	RollingPercent int    `yaml:"rolling_percent,omitempty"` // For rolling: percentage per step
 }
 
 type Upstream struct {
@@ -66,12 +77,43 @@ type Upstream struct {
 	Port        int    `yaml:"port"`
 	TLS         *bool  `yaml:"tls,omitempty"`
 	TLSInsecure *bool  `yaml:"tls_insecure,omitempty"`
+	Version     string `yaml:"version,omitempty"` // Version label for deployment strategies
+	Weight      int    `yaml:"weight,omitempty"`  // Weight for canary/rolling deployments
 }
 
 type CORSConfig struct {
 	AllowedOrigins []string `yaml:"allowed_origins"`
 	AllowedMethods []string `yaml:"allowed_methods"`
 	AllowedHeaders []string `yaml:"allowed_headers"`
+}
+
+type SecurityConfig struct {
+	IPBlocker IPBlockerConfig `yaml:"ip_blocker,omitempty"`
+	WAF       WAFConfig       `yaml:"waf,omitempty"`
+}
+
+type IPBlockerConfig struct {
+	Enabled       bool     `yaml:"enabled"`
+	Mode          string   `yaml:"mode"`                  // "allowlist", "blocklist", or "off"
+	Allowlist     []string `yaml:"allowlist"`             // List of allowed IPs/CIDRs
+	Blocklist     []string `yaml:"blocklist"`             // List of blocked IPs/CIDRs
+	AllowlistFile string   `yaml:"allowlist_file,omitempty"` // Path to allowlist file
+	BlocklistFile string   `yaml:"blocklist_file,omitempty"` // Path to blocklist file
+}
+
+type WAFConfig struct {
+	Enabled     bool            `yaml:"enabled"`
+	Mode        string          `yaml:"mode"` // "block" or "detect"
+	LogFile     string          `yaml:"log_file,omitempty"` // Path to WAF log file
+	CustomRules []WAFRuleConfig `yaml:"custom_rules,omitempty"`
+}
+
+type WAFRuleConfig struct {
+	ID          string `yaml:"id"`
+	Description string `yaml:"description"`
+	Pattern     string `yaml:"pattern"`
+	Target      string `yaml:"target"` // "uri", "body", "headers", "query", "all"
+	Action      string `yaml:"action"` // "block", "log"
 }
 
 func (fr FallbackResponse) Validate() error {
@@ -81,6 +123,123 @@ func (fr FallbackResponse) Validate() error {
 	if fr.Body == "" && fr.BodyBase64 == "" {
 		return fmt.Errorf("fallback_response must have either body or body_base64")
 	}
+	return nil
+}
+
+func (dc DeploymentConfig) Validate(upstreams []Upstream) error {
+	if dc.Type == "" {
+		return nil // No deployment strategy is valid
+	}
+
+	switch dc.Type {
+	case "blue-green":
+		if dc.ActiveVersion == "" {
+			return fmt.Errorf("active_version is required for blue-green deployment")
+		}
+		// Check that all upstreams have version labels
+		for _, up := range upstreams {
+			if up.Version == "" {
+				return fmt.Errorf("all upstreams must have a version label for blue-green deployment")
+			}
+		}
+		// Check that active version exists
+		found := false
+		for _, up := range upstreams {
+			if up.Version == dc.ActiveVersion {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("active_version %s not found in upstreams", dc.ActiveVersion)
+		}
+
+	case "canary":
+		if dc.CanaryPercent < 0 || dc.CanaryPercent > 100 {
+			return fmt.Errorf("canary_percent must be between 0 and 100")
+		}
+		// Check that all upstreams have version labels
+		versions := make(map[string]bool)
+		for _, up := range upstreams {
+			if up.Version == "" {
+				return fmt.Errorf("all upstreams must have a version label for canary deployment")
+			}
+			versions[up.Version] = true
+		}
+		if len(versions) != 2 {
+			return fmt.Errorf("canary deployment requires exactly 2 versions, found %d", len(versions))
+		}
+
+	case "rolling":
+		// Check that all upstreams have weights
+		for _, up := range upstreams {
+			if up.Weight <= 0 {
+				return fmt.Errorf("all upstreams must have a positive weight for rolling deployment")
+			}
+		}
+
+	case "recreate":
+		if dc.ActiveVersion == "" {
+			return fmt.Errorf("active_version is required for recreate deployment")
+		}
+		// Check that active version exists
+		found := false
+		for _, up := range upstreams {
+			if up.Version == dc.ActiveVersion {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("active_version %s not found in upstreams", dc.ActiveVersion)
+		}
+
+	default:
+		return fmt.Errorf("unknown deployment type: %s (must be blue-green, canary, rolling, or recreate)", dc.Type)
+	}
+
+	return nil
+}
+
+func (sc SecurityConfig) Validate() error {
+	// Validate IP Blocker
+	if sc.IPBlocker.Enabled {
+		if sc.IPBlocker.Mode != "allowlist" && sc.IPBlocker.Mode != "blocklist" && sc.IPBlocker.Mode != "off" {
+			return fmt.Errorf("ip_blocker mode must be 'allowlist', 'blocklist', or 'off', got: %s", sc.IPBlocker.Mode)
+		}
+
+		if sc.IPBlocker.Mode == "allowlist" && len(sc.IPBlocker.Allowlist) == 0 {
+			return fmt.Errorf("ip_blocker allowlist mode requires at least one IP/CIDR in allowlist")
+		}
+
+		if sc.IPBlocker.Mode == "blocklist" && len(sc.IPBlocker.Blocklist) == 0 {
+			return fmt.Errorf("ip_blocker blocklist mode requires at least one IP/CIDR in blocklist")
+		}
+	}
+
+	// Validate WAF
+	if sc.WAF.Enabled {
+		if sc.WAF.Mode != "block" && sc.WAF.Mode != "detect" {
+			return fmt.Errorf("waf mode must be 'block' or 'detect', got: %s", sc.WAF.Mode)
+		}
+
+		// Validate custom rules
+		for i, rule := range sc.WAF.CustomRules {
+			if rule.ID == "" {
+				return fmt.Errorf("waf custom rule %d: id is required", i)
+			}
+			if rule.Pattern == "" {
+				return fmt.Errorf("waf custom rule %s: pattern is required", rule.ID)
+			}
+			if rule.Target != "uri" && rule.Target != "body" && rule.Target != "headers" && rule.Target != "query" && rule.Target != "all" {
+				return fmt.Errorf("waf custom rule %s: target must be 'uri', 'body', 'headers', 'query', or 'all'", rule.ID)
+			}
+			if rule.Action != "block" && rule.Action != "log" {
+				return fmt.Errorf("waf custom rule %s: action must be 'block' or 'log'", rule.ID)
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -101,24 +260,46 @@ func LoadConfig(path string) (*Config, error) {
 	if cfg.APIs == nil {
 		cfg.APIs = []APIConfig{}
 	}
+
+	// Validate TLS configuration
+	if cfg.Config.TLS {
+		if cfg.Config.TLSCertFile == "" {
+			return nil, fmt.Errorf("tls_cert_file is required when tls is enabled")
+		}
+		if cfg.Config.TLSKeyFile == "" {
+			return nil, fmt.Errorf("tls_key_file is required when tls is enabled")
+		}
+	}
+	// Validate permissions
+	if err := cfg.ValidatePermissions(); err != nil {
+		return nil, err
+	}
+
+	// Validate auth configs
+	for _, auth := range cfg.Auth {
+		if err := auth.Validate(); err != nil {
+			return nil, fmt.Errorf("invalid auth config: %w", err)
+		}
+	}
+
+	// Validate and set defaults for each API's routes and upstreams
 	for i, api := range cfg.APIs {
+		// Validate security config
+		if err := api.Security.Validate(); err != nil {
+			return nil, fmt.Errorf("invalid security config for API %s: %w", api.Name, err)
+		}
+
 		for j, route := range api.Routes {
+			// Validate deployment strategy
+			if err := route.DeploymentStrategy.Validate(route.Upstreams); err != nil {
+				return nil, fmt.Errorf("invalid deployment strategy for API %s, route %s: %w", api.Name, route.Path, err)
+			}
+
 			for k, upstream := range route.Upstreams {
 				// default tls to false if not set
 				if upstream.TLS == nil {
 					def := false
 					cfg.APIs[i].Routes[j].Upstreams[k].TLS = &def
-				}
-
-				if err := cfg.ValidatePermissions(); err != nil {
-					return nil, err
-				}
-
-				// Validate auth configs
-				for _, auth := range cfg.Auth {
-					if err := auth.Validate(); err != nil {
-						return nil, fmt.Errorf("invalid auth config: %w", err)
-					}
 				}
 
 				// if tls=true but tls_insecure missing -> default to false

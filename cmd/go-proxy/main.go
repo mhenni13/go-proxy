@@ -13,12 +13,54 @@ import (
 )
 
 func main() {
-	configPath := flag.String("config", "internal/config/config.yaml", "Path to config file")
+	configPath := flag.String("c", "internal/config/config.yaml", "Path to config file")
+	configPathLong := flag.String("config", "internal/config/config.yaml", "Path to config file")
+	wafLogPath := flag.String("l", "", "Path to WAF log file (overrides config)")
+	wafLogPathLong := flag.String("log", "", "Path to WAF log file (overrides config)")
+	ipListPath := flag.String("s", "", "Path to IP list file (allowlist/blocklist, overrides config)")
+	ipListPathLong := flag.String("security-list", "", "Path to IP list file (allowlist/blocklist, overrides config)")
 	flag.Parse()
 
-	cfg, err := config.LoadConfig(*configPath)
+	// Use long flag if provided, otherwise short flag
+	finalConfigPath := *configPath
+	if *configPathLong != "internal/config/config.yaml" {
+		finalConfigPath = *configPathLong
+	}
+
+	finalWafLog := *wafLogPath
+	if *wafLogPathLong != "" {
+		finalWafLog = *wafLogPathLong
+	}
+
+	finalIPList := *ipListPath
+	if *ipListPathLong != "" {
+		finalIPList = *ipListPathLong
+	}
+
+	cfg, err := config.LoadConfig(finalConfigPath)
 	if err != nil {
 		log.Fatalf("❌ Failed to load config: %v", err)
+	}
+
+	// Override config with CLI flags
+	if finalWafLog != "" {
+		for i := range cfg.APIs {
+			if cfg.APIs[i].Security.WAF.Enabled {
+				cfg.APIs[i].Security.WAF.LogFile = finalWafLog
+			}
+		}
+	}
+
+	if finalIPList != "" {
+		for i := range cfg.APIs {
+			if cfg.APIs[i].Security.IPBlocker.Enabled {
+				if cfg.APIs[i].Security.IPBlocker.Mode == "allowlist" {
+					cfg.APIs[i].Security.IPBlocker.AllowlistFile = finalIPList
+				} else if cfg.APIs[i].Security.IPBlocker.Mode == "blocklist" {
+					cfg.APIs[i].Security.IPBlocker.BlocklistFile = finalIPList
+				}
+			}
+		}
 	}
 
 	mux := http.NewServeMux()
@@ -49,8 +91,15 @@ func main() {
 		IdleTimeout:  idleTimeout * time.Second,
 	}
 
-	log.Printf("🚀 Proxy starting on :%d ...", cfg.Config.Port)
-	if err := server.ListenAndServe(); err != nil {
-		log.Fatalf("❌ Proxy server error: %v", err)
+	if cfg.Config.TLS {
+		log.Printf("🚀 Proxy starting with TLS on :%d ...", cfg.Config.Port)
+		if err := server.ListenAndServeTLS(cfg.Config.TLSCertFile, cfg.Config.TLSKeyFile); err != nil {
+			log.Fatalf("❌ Proxy server error: %v", err)
+		}
+	} else {
+		log.Printf("🚀 Proxy starting on :%d ...", cfg.Config.Port)
+		if err := server.ListenAndServe(); err != nil {
+			log.Fatalf("❌ Proxy server error: %v", err)
+		}
 	}
 }

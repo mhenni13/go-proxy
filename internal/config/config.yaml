@@ -36,6 +36,15 @@ apis:
             port: 8880
             tls: true
             tls_insecure: true
+            version: "v1"
+          - host: localhost
+            port: 8881
+            tls: true
+            tls_insecure: true
+            version: "v2"
+        deployment_strategy:
+          type: blue-green
+          active_version: "v1"
     cors:
       allowed_origins: ["*"]
       allowed_methods: ["GET", "POST", "OPTIONS"]
@@ -75,3 +84,19 @@ apis:
     fallback_response:
       status: 503
       body: '{"error": "service unavailable"}'
+    security:
+      ip_blocker:
+        enabled: true
+        mode: "blocklist"  # or "allowlist"
+        blocklist:
+          - "192.168.1.100"
+          - "10.0.0.0/8"
+      waf:
+        enabled: true
+        mode: "block"  # or "detect" for logging only
+        custom_rules:
+          - id: "CUSTOM-001"
+            description: "Block requests with suspicious patterns"
+            pattern: "(admin|root|\.\.\/)"
+            target: "uri"
+            action: "block"
