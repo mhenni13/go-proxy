@@ -1,0 +1,140 @@
+version: '3.8'
+
+services:
+  # Consul server
+  consul:
+    image: consul:latest
+    container_name: consul-server
+    ports:
+      - "8500:8500"
+      - "8600:8600/udp"
+    command: agent -server -ui -bootstrap-expect=1 -client=0.0.0.0
+    networks:
+      - service-discovery-net
+    healthcheck:
+      test: ["CMD", "consul", "members"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Backend service instance 1
+  backend-1:
+    image: nginx:alpine
+    container_name: backend-1
+    ports:
+      - "9001:80"
+    environment:
+      - SERVICE_NAME=backend-service
+      - SERVICE_ID=backend-1
+      - SERVICE_PORT=80
+      - SERVICE_VERSION=v1.0.0
+    volumes:
+      - ./backend-init.sh:/docker-entrypoint.d/99-register-consul.sh:ro
+      - ./backend-1-content:/usr/share/nginx/html:rw
+    networks:
+      - service-discovery-net
+    depends_on:
+      - consul
+    command: sh -c "echo '<h1>Backend-1</h1><p>Version: v1.0.0</p>' > /usr/share/nginx/html/index.html && nginx -g 'daemon off;'"
+
+  # Backend service instance 2
+  backend-2:
+    image: nginx:alpine
+    container_name: backend-2
+    ports:
+      - "9002:80"
+    environment:
+      - SERVICE_NAME=backend-service
+      - SERVICE_ID=backend-2
+      - SERVICE_PORT=80
+      - SERVICE_VERSION=v1.0.0
+    volumes:
+      - ./backend-init.sh:/docker-entrypoint.d/99-register-consul.sh:ro
+      - ./backend-2-content:/usr/share/nginx/html:rw
+    networks:
+      - service-discovery-net
+    depends_on:
+      - consul
+    command: sh -c "echo '<h1>Backend-2</h1><p>Version: v1.0.0</p>' > /usr/share/nginx/html/index.html && nginx -g 'daemon off;'"
+
+  # Backend service instance 3
+  backend-3:
+    image: nginx:alpine
+    container_name: backend-3
+    ports:
+      - "9003:80"
+    environment:
+      - SERVICE_NAME=backend-service
+      - SERVICE_ID=backend-3
+      - SERVICE_PORT=80
+      - SERVICE_VERSION=v1.0.0
+    volumes:
+      - ./backend-init.sh:/docker-entrypoint.d/99-register-consul.sh:ro
+      - ./backend-3-content:/usr/share/nginx/html:rw
+    networks:
+      - service-discovery-net
+    depends_on:
+      - consul
+    command: sh -c "echo '<h1>Backend-3</h1><p>Version: v1.0.0</p>' > /usr/share/nginx/html/index.html && nginx -g 'daemon off;'"
+
+  # Backend v2 for canary testing
+  backend-v2:
+    image: nginx:alpine
+    container_name: backend-v2
+    ports:
+      - "9004:80"
+    environment:
+      - SERVICE_NAME=backend-service
+      - SERVICE_ID=backend-v2-1
+      - SERVICE_PORT=80
+      - SERVICE_VERSION=v2.0.0
+      - SERVICE_TAGS=v2,canary
+    volumes:
+      - ./backend-init.sh:/docker-entrypoint.d/99-register-consul.sh:ro
+      - ./backend-v2-content:/usr/share/nginx/html:rw
+    networks:
+      - service-discovery-net
+    depends_on:
+      - consul
+    command: sh -c "echo '<h1>Backend-V2 (Canary)</h1><p>Version: v2.0.0</p>' > /usr/share/nginx/html/index.html && nginx -g 'daemon off;'"
+
+  # Service registrator (registers services automatically with Consul)
+  registrator:
+    image: gliderlabs/registrator:latest
+    container_name: registrator
+    command: -internal consul://consul:8500
+    volumes:
+      - /var/run/docker.sock:/tmp/docker.sock
+    networks:
+      - service-discovery-net
+    depends_on:
+      - consul
+
+  # go-proxy (uncomment and build image to run)
+  # go-proxy:
+  #   build:
+  #     context: ../../..
+  #     dockerfile: Dockerfile
+  #   container_name: go-proxy
+  #   ports:
+  #     - "8080:8080"
+  #   volumes:
+  #     - ./consul-docker-config.yaml:/etc/go-proxy/config.yaml:ro
+  #   command: ["-config", "/etc/go-proxy/config.yaml"]
+  #   networks:
+  #     - service-discovery-net
+  #   depends_on:
+  #     - consul
+  #     - backend-1
+  #     - backend-2
+  #     - backend-3
+
+networks:
+  service-discovery-net:
+    driver: bridge
+
+volumes:
+  backend-1-content:
+  backend-2-content:
+  backend-3-content:
+  backend-v2-content:

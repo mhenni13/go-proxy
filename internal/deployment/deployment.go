@@ -11,6 +11,7 @@ import (
 // Strategy defines the interface for deployment strategies
 type Strategy interface {
 	SelectUpstream() (config.Upstream, error)
+	UpdateUpstreams(upstreams []config.Upstream)
 }
 
 // NewStrategy creates a deployment strategy based on config
@@ -63,6 +64,15 @@ func (s *StandardStrategy) SelectUpstream() (config.Upstream, error) {
 	return up, nil
 }
 
+func (s *StandardStrategy) UpdateUpstreams(upstreams []config.Upstream) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.upstreams = upstreams
+	if s.index >= len(upstreams) {
+		s.index = 0
+	}
+}
+
 // BlueGreenStrategy routes all traffic to the active version
 type BlueGreenStrategy struct {
 	activeVersion string
@@ -105,6 +115,20 @@ func (s *BlueGreenStrategy) SelectUpstream() (config.Upstream, error) {
 
 	// Round-robin among active version upstreams
 	return activeUpstreams[rand.Intn(len(activeUpstreams))], nil
+}
+
+func (s *BlueGreenStrategy) UpdateUpstreams(upstreams []config.Upstream) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Rebuild version map
+	versionMap := make(map[string][]config.Upstream)
+	for _, up := range upstreams {
+		if up.Version != "" {
+			versionMap[up.Version] = append(versionMap[up.Version], up)
+		}
+	}
+	s.upstreams = versionMap
 }
 
 // CanaryStrategy routes a percentage of traffic to the new version
@@ -184,6 +208,27 @@ func (s *CanaryStrategy) SelectUpstream() (config.Upstream, error) {
 	return s.stableUpstreams[rand.Intn(len(s.stableUpstreams))], nil
 }
 
+func (s *CanaryStrategy) UpdateUpstreams(upstreams []config.Upstream) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Rebuild version groups
+	versions := make(map[string][]config.Upstream)
+	for _, up := range upstreams {
+		if up.Version != "" {
+			versions[up.Version] = append(versions[up.Version], up)
+		}
+	}
+
+	// Update stable and canary based on version names
+	if stableUps, ok := versions[s.stableVersion]; ok {
+		s.stableUpstreams = stableUps
+	}
+	if canaryUps, ok := versions[s.canaryVersion]; ok {
+		s.canaryUpstreams = canaryUps
+	}
+}
+
 // RollingStrategy uses weighted distribution based on upstream weights
 type RollingStrategy struct {
 	upstreams    []config.Upstream
@@ -233,6 +278,20 @@ func (s *RollingStrategy) SelectUpstream() (config.Upstream, error) {
 	return s.upstreams[0], nil
 }
 
+func (s *RollingStrategy) UpdateUpstreams(upstreams []config.Upstream) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.upstreams = upstreams
+	totalWeight := 0
+	for _, up := range upstreams {
+		if up.Weight > 0 {
+			totalWeight += up.Weight
+		}
+	}
+	s.totalWeight = totalWeight
+}
+
 // RecreateStrategy routes to the new version only (old version is down)
 type RecreateStrategy struct {
 	activeVersion string
@@ -273,4 +332,18 @@ func (s *RecreateStrategy) SelectUpstream() (config.Upstream, error) {
 
 	// Random selection among active version upstreams
 	return s.upstreams[rand.Intn(len(s.upstreams))], nil
+}
+
+func (s *RecreateStrategy) UpdateUpstreams(upstreams []config.Upstream) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Filter by active version
+	var activeUpstreams []config.Upstream
+	for _, up := range upstreams {
+		if up.Version == s.activeVersion {
+			activeUpstreams = append(activeUpstreams, up)
+		}
+	}
+	s.upstreams = activeUpstreams
 }

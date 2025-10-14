@@ -1,0 +1,174 @@
+# Example configuration with Kubernetes service discovery
+# This demonstrates how to use Kubernetes service discovery with go-proxy
+
+config:
+  port: 8080
+  tls: false
+  auth: true
+  read_timeout: 15s
+  write_timeout: 15s
+  idle_timeout: 60s
+
+auth:
+  - group: admin
+    type: jwt
+    jwt_secret: "my-super-secret-key-change-this-in-production"
+    verify: 'have("admin")'
+
+apis:
+  # Example 1: Basic Kubernetes service discovery using Service IP
+  - name: backend-api
+    protocol: http
+    public: false
+    permissions:
+      - admin
+    routes:
+      - path: /api/backend/*
+        service_discovery:
+          type: kubernetes
+          refresh_period: 30s
+          kubernetes:
+            namespace: default
+            service_name: backend-service
+            port: 8080
+            use_tls: false
+            use_endpoints: false  # Use Service ClusterIP
+    load_balancing: round-robin
+    rate_limit: 100
+    max_retries: 3
+    retry_delay_ms: 500
+    fallback_response:
+      status: 503
+      body: '{"error": "Backend service unavailable"}'
+    cors:
+      allowed_origins:
+        - "*"
+      allowed_methods:
+        - GET
+        - POST
+        - PUT
+        - DELETE
+      allowed_headers:
+        - Content-Type
+        - Authorization
+
+  # Example 2: Kubernetes discovery with pod IPs and label filtering
+  - name: microservice-api
+    protocol: http
+    public: false
+    permissions:
+      - admin
+    routes:
+      - path: /api/micro/*
+        service_discovery:
+          type: kubernetes
+          refresh_period: 1m
+          kubernetes:
+            namespace: production
+            service_name: microservice
+            port: 9000
+            use_tls: true
+            tls_insecure: false
+            use_endpoints: true  # Discover individual pod IPs
+            labels:
+              app: microservice
+              version: v2
+            # kubeconfig: /path/to/kubeconfig  # Optional: for out-of-cluster access
+    load_balancing: random
+    rate_limit: 200
+    max_retries: 2
+    retry_delay_ms: 1000
+    fallback_response:
+      status: 503
+      body: '{"error": "Microservice unavailable"}'
+
+  # Example 3: Kubernetes discovery with blue-green deployment strategy
+  - name: versioned-api
+    protocol: http
+    public: true
+    routes:
+      - path: /api/v1/*
+        service_discovery:
+          type: kubernetes
+          refresh_period: 45s
+          kubernetes:
+            namespace: default
+            service_name: versioned-app
+            port: 8080
+            use_tls: false
+            use_endpoints: true
+            labels:
+              app: versioned-app
+        deployment_strategy:
+          type: blue-green
+          active_version: v1.2.0
+    load_balancing: round-robin
+    max_retries: 3
+    retry_delay_ms: 500
+    fallback_response:
+      status: 503
+      body: '{"error": "Service temporarily unavailable"}'
+
+  # Example 4: Traditional static upstreams (for comparison/mixed use)
+  - name: legacy-api
+    protocol: http
+    public: true
+    routes:
+      - path: /api/legacy/*
+        upstreams:
+          - host: 192.168.1.10
+            port: 8080
+          - host: 192.168.1.11
+            port: 8080
+    load_balancing: round-robin
+    max_retries: 2
+    retry_delay_ms: 500
+    fallback_response:
+      status: 503
+      body: '{"error": "Legacy service unavailable"}'
+
+  # Example 5: Kubernetes discovery with canary deployment
+  - name: canary-api
+    protocol: http
+    public: false
+    permissions:
+      - admin
+    routes:
+      - path: /api/canary/*
+        service_discovery:
+          type: kubernetes
+          refresh_period: 30s
+          kubernetes:
+            namespace: default
+            service_name: canary-service
+            port: 8080
+            use_tls: false
+            use_endpoints: true
+        deployment_strategy:
+          type: canary
+          canary_percent: 10  # Send 10% of traffic to canary version
+    load_balancing: round-robin
+    rate_limit: 150
+    max_retries: 3
+    retry_delay_ms: 500
+    fallback_response:
+      status: 503
+      body: '{"error": "Canary service unavailable"}'
+    cors:
+      allowed_origins:
+        - "*"
+      allowed_methods:
+        - GET
+        - POST
+      allowed_headers:
+        - Content-Type
+        - Authorization
+
+# Notes:
+# 1. use_endpoints: false - Discovers the Service ClusterIP (single upstream)
+# 2. use_endpoints: true - Discovers individual pod IPs (multiple upstreams)
+# 3. labels filter pods when use_endpoints is true
+# 4. kubeconfig is optional - omit for in-cluster access
+# 5. refresh_period controls how often upstreams are updated (e.g., "30s", "1m", "5m")
+# 6. Service discovery works with all deployment strategies
+# 7. Routes must use EITHER upstreams OR service_discovery, not both

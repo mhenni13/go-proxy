@@ -60,9 +60,19 @@ type FallbackResponse struct {
 }
 
 type Route struct {
-	Path               string           `yaml:"path"`
-	Upstreams          []Upstream       `yaml:"upstreams"`
-	DeploymentStrategy DeploymentConfig `yaml:"deployment_strategy,omitempty"`
+	Path               string            `yaml:"path"`
+	Upstreams          []Upstream        `yaml:"upstreams,omitempty"`
+	ServiceDiscovery   *DiscoveryConfig  `yaml:"service_discovery,omitempty"`
+	DeploymentStrategy DeploymentConfig  `yaml:"deployment_strategy,omitempty"`
+}
+
+type DiscoveryConfig struct {
+	Type          string               `yaml:"type"`           // "kubernetes", "consul", "dns", "file"
+	RefreshPeriod string               `yaml:"refresh_period"` // e.g., "30s", "1m"
+	Kubernetes    *KubernetesDiscovery `yaml:"kubernetes,omitempty"`
+	Consul        *ConsulDiscovery     `yaml:"consul,omitempty"`
+	DNS           *DNSDiscovery        `yaml:"dns,omitempty"`
+	File          *FileDiscovery       `yaml:"file,omitempty"`
 }
 
 type DeploymentConfig struct {
@@ -79,6 +89,43 @@ type Upstream struct {
 	TLSInsecure *bool  `yaml:"tls_insecure,omitempty"`
 	Version     string `yaml:"version,omitempty"` // Version label for deployment strategies
 	Weight      int    `yaml:"weight,omitempty"`  // Weight for canary/rolling deployments
+}
+
+type KubernetesDiscovery struct {
+	Namespace    string            `yaml:"namespace"`
+	ServiceName  string            `yaml:"service_name"`
+	Port         int32             `yaml:"port"`
+	UseTLS       bool              `yaml:"use_tls,omitempty"`
+	TLSInsecure  bool              `yaml:"tls_insecure,omitempty"`
+	Labels       map[string]string `yaml:"labels,omitempty"`
+	UseEndpoints bool              `yaml:"use_endpoints,omitempty"` // Discover individual pod IPs
+	KubeConfig   string            `yaml:"kubeconfig,omitempty"`    // Path to kubeconfig (empty = in-cluster)
+}
+
+type ConsulDiscovery struct {
+	Address     string `yaml:"address"`               // Consul agent address (e.g., "localhost:8500")
+	ServiceName string `yaml:"service_name"`          // Service name to discover
+	Tag         string `yaml:"tag,omitempty"`         // Optional service tag filter
+	Datacenter  string `yaml:"datacenter,omitempty"`  // Optional datacenter
+	Token       string `yaml:"token,omitempty"`       // Optional ACL token
+	UseTLS      bool   `yaml:"use_tls,omitempty"`     // Use HTTPS for upstreams
+	TLSInsecure bool   `yaml:"tls_insecure,omitempty"` // Skip TLS verification
+	OnlyPassing bool   `yaml:"only_passing"`          // Only return healthy services (default: true)
+}
+
+type DNSDiscovery struct {
+	Hostname    string `yaml:"hostname"`              // DNS hostname to resolve
+	Port        int    `yaml:"port,omitempty"`        // Port (required if not using SRV)
+	UseSRV      bool   `yaml:"use_srv,omitempty"`     // Use DNS SRV records
+	Resolver    string `yaml:"resolver,omitempty"`    // Custom DNS resolver
+	UseTLS      bool   `yaml:"use_tls,omitempty"`     // Use HTTPS for upstreams
+	TLSInsecure bool   `yaml:"tls_insecure,omitempty"` // Skip TLS verification
+}
+
+type FileDiscovery struct {
+	Path        string `yaml:"path"`                   // Path to file containing upstream list
+	Format      string `yaml:"format,omitempty"`       // "json" or "yaml" (auto-detected if omitted)
+	WatchPeriod string `yaml:"watch_period,omitempty"` // How often to check for file changes
 }
 
 type CORSConfig struct {
@@ -123,6 +170,70 @@ func (fr FallbackResponse) Validate() error {
 	if fr.Body == "" && fr.BodyBase64 == "" {
 		return fmt.Errorf("fallback_response must have either body or body_base64")
 	}
+	return nil
+}
+
+func (disc DiscoveryConfig) Validate() error {
+	if disc.Type == "" {
+		return fmt.Errorf("service_discovery type is required")
+	}
+
+	validTypes := []string{"kubernetes", "consul", "dns", "file"}
+	isValid := false
+	for _, t := range validTypes {
+		if disc.Type == t {
+			isValid = true
+			break
+		}
+	}
+	if !isValid {
+		return fmt.Errorf("service_discovery type must be one of: %v, got: %s", validTypes, disc.Type)
+	}
+
+	// Validate type-specific configuration
+	switch disc.Type {
+	case "kubernetes":
+		if disc.Kubernetes == nil {
+			return fmt.Errorf("kubernetes configuration is required when type is 'kubernetes'")
+		}
+		if disc.Kubernetes.Namespace == "" {
+			return fmt.Errorf("kubernetes.namespace is required")
+		}
+		if disc.Kubernetes.ServiceName == "" {
+			return fmt.Errorf("kubernetes.service_name is required")
+		}
+
+	case "consul":
+		if disc.Consul == nil {
+			return fmt.Errorf("consul configuration is required when type is 'consul'")
+		}
+		if disc.Consul.Address == "" {
+			return fmt.Errorf("consul.address is required")
+		}
+		if disc.Consul.ServiceName == "" {
+			return fmt.Errorf("consul.service_name is required")
+		}
+
+	case "dns":
+		if disc.DNS == nil {
+			return fmt.Errorf("dns configuration is required when type is 'dns'")
+		}
+		if disc.DNS.Hostname == "" {
+			return fmt.Errorf("dns.hostname is required")
+		}
+		if !disc.DNS.UseSRV && disc.DNS.Port == 0 {
+			return fmt.Errorf("dns.port is required when not using SRV records")
+		}
+
+	case "file":
+		if disc.File == nil {
+			return fmt.Errorf("file configuration is required when type is 'file'")
+		}
+		if disc.File.Path == "" {
+			return fmt.Errorf("file.path is required")
+		}
+	}
+
 	return nil
 }
 
@@ -290,6 +401,19 @@ func LoadConfig(path string) (*Config, error) {
 		}
 
 		for j, route := range api.Routes {
+			// Validate service discovery or upstreams
+			if route.ServiceDiscovery != nil && len(route.Upstreams) > 0 {
+				return nil, fmt.Errorf("route %s cannot have both upstreams and service_discovery", route.Path)
+			}
+			if route.ServiceDiscovery == nil && len(route.Upstreams) == 0 {
+				return nil, fmt.Errorf("route %s must have either upstreams or service_discovery", route.Path)
+			}
+			if route.ServiceDiscovery != nil {
+				if err := route.ServiceDiscovery.Validate(); err != nil {
+					return nil, fmt.Errorf("invalid service_discovery for API %s, route %s: %w", api.Name, route.Path, err)
+				}
+			}
+
 			// Validate deployment strategy
 			if err := route.DeploymentStrategy.Validate(route.Upstreams); err != nil {
 				return nil, fmt.Errorf("invalid deployment strategy for API %s, route %s: %w", api.Name, route.Path, err)
